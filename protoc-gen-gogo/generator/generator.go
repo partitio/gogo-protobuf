@@ -350,12 +350,16 @@ func (d *FileDescriptor) goPackageName() (name string, explicit bool) {
 }
 
 // goFileName returns the output name for the generated Go file.
-func (d *FileDescriptor) goFileName() string {
+func (d *FileDescriptor) goFileName(pathType pathType) string {
 	name := *d.Name
 	if ext := path.Ext(name); ext == ".proto" || ext == ".protodevel" {
 		name = name[:len(name)-len(ext)]
 	}
 	name += ".pb.go"
+
+	if pathType == pathTypeSourceRelative {
+		return name
+	}
 
 	// Does the file have a "go_package" option?
 	// If it does, it may override the filename.
@@ -607,11 +611,19 @@ type Generator struct {
 	typeNameToObject map[string]Object          // Key is a fully-qualified name in input syntax.
 	init             []string                   // Lines to emit in the init function.
 	indent           string
+	pathType         pathType // How to generate output filenames.
 	writeOutput      bool
 
 	customImports  []string
 	writtenImports map[string]bool // For de-duplicating written imports
 }
+
+type pathType int
+
+const (
+	pathTypeImport pathType = iota
+	pathTypeSourceRelative
+)
 
 // New creates a new generator and allocates the request and response protobufs.
 func New() *Generator {
@@ -660,6 +672,15 @@ func (g *Generator) CommandLineParameters(parameter string) {
 			g.ImportPrefix = v
 		case "import_path":
 			g.PackageImportPath = v
+		case "paths":
+			switch v {
+			case "import":
+				g.pathType = pathTypeImport
+			case "source_relative":
+				g.pathType = pathTypeSourceRelative
+			default:
+				g.Fail(fmt.Sprintf(`Unknown path type %q: want "import" or "source_relative".`, v))
+			}
 		case "plugins":
 			pluginList = v
 		default:
@@ -1220,7 +1241,7 @@ func (g *Generator) GenerateAllFiles() {
 			continue
 		}
 		g.Response.File = append(g.Response.File, &plugin.CodeGeneratorResponse_File{
-			Name:    proto.String(file.goFileName()),
+			Name:    proto.String(file.goFileName(g.pathType)),
 			Content: proto.String(g.String()),
 		})
 	}
@@ -1438,7 +1459,7 @@ func (g *Generator) generateImports() {
 		if fd.PackageName() == g.packageName {
 			continue
 		}
-		filename := fd.goFileName()
+		filename := fd.goFileName(g.pathType)
 		// By default, import path is the dirname of the Go filename.
 		importPath := path.Dir(filename)
 		if substitution, ok := g.ImportMap[s]; ok {
